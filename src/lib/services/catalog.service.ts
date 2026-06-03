@@ -184,7 +184,7 @@ export async function createExampleCatalog() {
         features: { orderBy: { sortOrder: "asc" }, include: { availabilities: true } },
       },
     });
-  });
+  }, { timeout: 30000 });
 }
 
 async function ensureProductExists(productId: string) {
