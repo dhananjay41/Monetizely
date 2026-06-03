@@ -1,0 +1,168 @@
+// Monetizely quoting tool — data model.
+//
+// Two concerns live here:
+//   1. The CATALOG (Product / Tier / Feature / FeatureAvailability) which an
+//      analyst edits, and
+//   2. QUOTES, which are immutable snapshots. A quote stores its own computed
+//      line items so that editing the catalog later never changes a quote that
+//      has already been sent to a customer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Product {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tiers    Tier[]
+  features Feature[]
+  quotes   Quote[]
+
+  @@map("products")
+}
+
+model Tier {
+  id        String   @id @default(cuid())
+  productId String
+  name      String
+  // Base price per seat per month, in USD. Decimal avoids float rounding drift.
+  basePrice Decimal  @db.Decimal(12, 2)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product        Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  availabilities FeatureAvailability[]
+  quotes         Quote[]
+
+  @@unique([productId, name])
+  @@index([productId])
+  @@map("tiers")
+}
+
+model Feature {
+  id        String   @id @default(cuid())
+  productId String
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product        Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  availabilities FeatureAvailability[]
+
+  @@unique([productId, name])
+  @@index([productId])
+  @@map("features")
+}
+
+// How a single feature behaves in a single tier. The unique (feature, tier)
+// pair is the matrix cell from the spec's "Feature Matrix" sheet.
+model FeatureAvailability {
+  id        String       @id @default(cuid())
+  featureId String
+  tierId    String
+  status    Availability @default(NOT_AVAILABLE)
+
+  // Add-on pricing — only meaningful when status == ADDON.
+  pricingModel PricingModel?
+  // For FIXED / PER_SEAT this is a dollar amount; for PERCENT it is a
+  // percentage (e.g. 10 means "10% of the base product cost").
+  price        Decimal?      @db.Decimal(12, 4)
+
+  feature Feature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  tier    Tier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+
+  @@unique([featureId, tierId])
+  @@index([tierId])
+  @@map("feature_availabilities")
+}
+
+enum Availability {
+  INCLUDED
+  ADDON
+  NOT_AVAILABLE
+}
+
+enum PricingModel {
+  FIXED // flat dollars per month
+  PER_SEAT // dollars per seat per month
+  PERCENT // percent of the base product cost
+}
+
+// ---------------------------------------------------------------------------
+// Quotes (immutable snapshots)
+// ---------------------------------------------------------------------------
+
+enum TermLength {
+  MONTHLY
+  ANNUAL
+  TWO_YEAR
+}
+
+model Quote {
+  id           String   @id @default(cuid())
+  name         String
+  customerName String
+  createdAt    DateTime @default(now())
+  validUntil   DateTime
+
+  // References into the catalog (kept for traceability) ...
+  productId String
+  tierId    String
+  product   Product @relation(fields: [productId], references: [id])
+  tier      Tier    @relation(fields: [tierId], references: [id])
+
+  // ... plus a denormalised snapshot so the quote reads correctly even if the
+  // catalog is edited afterwards.
+  productName      String
+  tierName         String
+  basePriceSnapshot Decimal @db.Decimal(12, 2)
+
+  seats       Int
+  term        TermLength
+  discountPct Decimal    @db.Decimal(5, 2) @default(0)
+
+  subtotal       Decimal @db.Decimal(12, 2)
+  discountAmount Decimal @db.Decimal(12, 2)
+  total          Decimal @db.Decimal(12, 2)
+
+  lineItems QuoteLineItem[]
+
+  @@index([productId])
+  @@map("quotes")
+}
+
+enum LineItemKind {
+  BASE
+  ADDON
+  DISCOUNT
+}
+
+model QuoteLineItem {
+  id          String       @id @default(cuid())
+  quoteId     String
+  kind        LineItemKind
+  label       String
+  // Human-readable "how it was calculated", e.g.
+  // "25 seats x $50.00 per seat per month x 12 months x (1 - 15% annual discount)".
+  calculation String
+  notes       String?
+  amount      Decimal      @db.Decimal(12, 2)
+  sortOrder   Int
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+  @@map("quote_line_items")
+}

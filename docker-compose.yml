@@ -1,0 +1,25 @@
+# Local Postgres for development & e2e tests.
+# Usage: docker compose up -d
+# Then: npm run prisma:migrate && npm run db:seed
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: monetizely-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: monetizely
+    ports:
+      # Host 5433 -> container 5432 (5433 avoids clashing with a local Postgres).
+      - "5433:5432"
+    volumes:
+      - monetizely-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  monetizely-pgdata:
